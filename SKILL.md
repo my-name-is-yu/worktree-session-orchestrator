@@ -1,6 +1,6 @@
 ---
 name: worktree-session-orchestrator
-description: Coordinate multiple Codex worktree/session implementation lanes through source-first implementation, monitoring, verification, PR readiness, review/CI fixes, and maintenance. Use when the user asks to split work across worktrees/sessions and orchestrate them to completion, with reasoning set to low.
+description: Coordinate multiple Codex project worktree-thread implementation lanes through source-first implementation, monitoring, verification, PR readiness, review/CI fixes, and maintenance. Use when the user asks to split work across worktrees/sessions and orchestrate them to completion, with reasoning set to low.
 ---
 
 # Worktree Session Orchestrator
@@ -17,11 +17,11 @@ wants multi-session orchestration.
 
 ## Purpose and Parent Responsibility
 
-The parent session owns judgment, integration, and lane completion. Separate
-Codex child sessions own isolated implementation lanes, including creating or
-attaching their own worktrees. Do not treat a parent-local subagent as a
-substitute for a separate session when the user asks for worktree/session
-orchestration.
+The parent session owns judgment, integration, child-session creation, and lane
+completion. Separate Codex child sessions own implementation inside the Codex
+project worktree assigned to that thread. Do not ask a child to create another
+`git worktree`, and do not treat a parent-local subagent as a substitute for a
+separate session when the user asks for worktree/session orchestration.
 
 Treat current source, tests, live PR state, and CI as authoritative. A lane is
 not complete because the child says it is complete, because a PR exists, or
@@ -37,7 +37,7 @@ deferred, or merged if merge was later requested.
 The parent should:
 
 - stay in the canonical repository unless inspecting child worktrees
-- coordinate separate Codex sessions for implementation lanes
+- coordinate separate Codex project worktree threads for implementation lanes
 - avoid parent-checkout implementation unless repairing or integrating a lane
 - preserve user changes and never force-push unless the batch owns the branch
   and no safer option exists
@@ -48,6 +48,32 @@ Use subagents only when they materially help with source-first audit, scope
 drift review, fake deletion/orphan helper detection, CI log analysis, or risky
 integration review. Subagents are advisory; the parent makes the final decision.
 
+## Codex Worktree Thread Setup
+
+Use Codex app project worktree threads as the normal execution path.
+
+Before creating child sessions:
+
+- load thread tools with `tool_search` if `list_projects`, `create_thread`,
+  `read_thread`, `send_message_to_thread`, or `automation_update` are not
+  visible
+- call `list_projects` and select the saved Codex project for the target
+  repository
+- stop and report a blocker if the repository is not available as a saved Codex
+  project; do not silently fall back to a parent-local subagent
+- create each child with `create_thread` using `target.type = "project"`,
+  the selected `projectId`, `target.environment.type = "worktree"`, and
+  `thinking = "low"`
+- let Codex assign the worktree checkout path; do not require a known worktree
+  path before the thread is created
+- record `threadId` when returned, or `pendingWorktreeId` while worktree setup
+  is still pending
+
+The parent creates the worktree-backed child thread. The child reports its
+assigned checkout with `pwd` at the start of its first turn, then works only
+inside that checkout. Use manual `git worktree add` only if the user explicitly
+approves a fallback after Codex project worktree-thread creation is unavailable.
+
 ## Batch Contract
 
 Read the user's stated goal and the current repository evidence needed to define
@@ -55,8 +81,8 @@ the batch. For each lane, record:
 
 - lane name
 - branch name
-- worktree path
 - child thread id or pending worktree id
+- assigned worktree path, initially unknown until the child reports `pwd`
 - acceptance criteria
 - expected and out-of-scope surfaces
 - verification commands
@@ -66,17 +92,20 @@ If the user names an existing session or active PR that overlaps a planned
 lane, prefer the user-led session unless the user explicitly says otherwise.
 Tell duplicates to stop and do not count duplicate PRs as deliverables.
 
-Prefer Codex thread/worktree tools. If manual worktree creation is needed,
-inspect existing worktrees and create a unique clean worktree from the default
-branch. Never remove or reuse a dirty path unless it clearly belongs to the
-lane.
+Do not preselect a local worktree path for Codex app worktree threads. If a
+child starts in a detached or default branch state, instruct it to create or
+switch to the lane branch inside its assigned checkout before editing.
 
 ## Child Session Prompt
 
 Each child prompt must be paste-ready and include:
 
-- repository, exact worktree path, and branch name
-- instruction to work only inside that worktree
+- repository, branch name, and the fact that Codex has already assigned the
+  worktree checkout for this thread
+- instruction to report `pwd`, `git branch --show-current`, and
+  `git status --short` before editing
+- instruction to work only inside the assigned checkout and not create another
+  worktree
 - task, acceptance criteria, and out-of-scope surfaces
 - warning against fake deletion, disconnected helper folders, unused rewrites,
   renamed legacy paths, and compatibility shims that preserve the old route
@@ -89,8 +118,17 @@ Each child prompt must be paste-ready and include:
 Use concrete wording like:
 
 ```text
-Work only in <worktree-path> on branch <branch-name>. Do not edit the parent
-checkout. Implement the task end to end, wire it into production call paths, and
+Codex has already created or assigned your project worktree for this thread.
+Work only inside this assigned checkout. Do not create another git worktree and
+do not edit the parent checkout.
+
+First report:
+- pwd
+- git branch --show-current
+- git status --short
+
+Then create or switch to branch <branch-name> inside this assigned checkout if
+needed. Implement the task end to end, wire it into production call paths, and
 delete obsolete paths rather than renaming or parking them. Do not create a new
 folder with replacement functions unless existing production callers are
 actually rewired to it and tests prove that path. Commit, push, and open a
@@ -101,7 +139,9 @@ ready PR when complete. Do not merge. Use reasoning effort low.
 
 For any multi-worktree batch expected to take more than one parent turn, create
 a heartbeat automation attached to the current thread unless the user explicitly
-declines. Default cadence: every 5 minutes.
+declines. Use `automation_update` with `kind = "heartbeat"`,
+`destination = "thread"`, `status = "ACTIVE"`, and a 5-minute cadence. Default
+cadence: every 5 minutes.
 
 The heartbeat prompt must be self-contained and include:
 
