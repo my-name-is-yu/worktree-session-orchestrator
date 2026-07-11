@@ -21,8 +21,7 @@ worktrees. Source, tests, current PR state, and latest-head CI outrank summaries
   implementation lanes. Never ask a child to create another worktree.
 - Preserve user changes. Do not force-push unless the batch owns the branch and
   no safer path exists.
-- Do not merge. If the user later requests merging, switch to the repository's
-  merge workflow or a dedicated merge skill.
+- Do not merge.
 - Create a goal only when explicitly requested; complete it only when every lane
   is ready, intentionally deferred, or blocked with evidence.
 - Use subagents only as advisory reviewers when an independent audit materially
@@ -35,17 +34,27 @@ Use GPT-5.6 by default:
 | Assignment | Default use |
 | --- | --- |
 | Luna low | Deterministic edits, inventory, formatting, log reduction, status, heartbeat |
-| Terra low | Default implementation, scoped investigation, tests, review fixes |
-| Sol low/medium | Parent judgment; ambiguous, cross-cutting, high-risk, or repeatedly failing lanes |
+| Luna medium | Default implementation, scoped investigation, tests, review fixes |
+| Luna high | Clear but multi-step work that needs deeper planning, tracing, or verification |
+| Sol light/low | Parent synthesis or lanes with ambiguous ownership, architecture, or scope |
+| Sol medium | High-risk, cross-cutting, security-sensitive, or repeatedly failing lanes |
 
-Do not select GPT-5.5 unless a workflow is pinned to it, reproducibility requires
-it, or GPT-5.6 is unavailable. Treat GPT-5.4 as a pinned-workflow compatibility
-choice and Spark as an optional Pro text-only preview, not a dependency.
+Use only Luna and Sol for new lanes: increase Luna reasoning when the contract
+is clear, and switch to Sol when the task needs stronger judgment. Do not select
+GPT-5.5 unless a workflow is pinned to it, reproducibility requires it, or
+GPT-5.6 is unavailable. Treat GPT-5.4 as a pinned-workflow compatibility choice
+and Spark as an optional Pro text-only preview, not a dependency.
 
-Escalate `Luna low -> Terra low -> Terra medium -> Sol low/medium`. Before
-escalating, repair missing success criteria, prerequisites, tool routing,
-evidence, verification, or stop rules. Escalate from observed failure or risk,
-not task duration.
+Route by failure shape rather than a single ladder:
+
+- If the contract remains clear but the lane needs more planning or checking,
+  use `Luna low -> Luna medium -> Luna high`.
+- If the lane is ambiguous, cross-cutting, misreading ownership, or drifting at
+  Luna high, switch to `Sol light/low`, then Sol medium only if needed.
+
+Before increasing effort or switching models, repair missing success criteria,
+prerequisites, tool routing, evidence, verification, or stop rules. Escalate
+from observed failure or risk, not task duration.
 
 Follow GPT-5.6 prompt guidance:
 
@@ -76,8 +85,10 @@ Follow GPT-5.6 prompt guidance:
 ```
 
 For each lane retain only: goal, success criteria, scope boundary, verification,
-PR contract, and any CI gate. Prefer an existing user-led session over a
-duplicate lane.
+PR contract, and the PR-time CI contract. Record whether CI is automatic or
+gated, the exact trigger or documented skip path, and who may trigger it. For
+gated CI, opening a review-ready PR must not trigger CI. Prefer an existing
+user-led session over a duplicate lane.
 
 ## Child Prompt
 
@@ -95,7 +106,8 @@ Success:
 - <observable production result>
 - <required removal or migration result>
 - <verification>
-- commit, push, and open/update a non-draft PR with a readiness summary
+- commit, push, and open/update a non-draft review-ready PR without triggering
+  gated CI
 
 Boundaries:
 - Work only in this thread's assigned worktree on <branch>; do not create a
@@ -103,8 +115,11 @@ Boundaries:
 - In scope: <scope>. Out of scope: <boundary>.
 - Do not preserve replaced behavior through aliases, shims, renamed paths, or
   disconnected helpers unless the project contract requires it.
-- Do not merge, run gated heavy CI, or proactively rebase unless the parent
-  marks `ready-for-ci` or `base-refresh-needed`, or project rules require it.
+- Do not merge or proactively rebase unless the parent marks
+  `base-refresh-needed` or project rules require it.
+- Follow the project's documented PR-time CI gate or skip path. Do not add a CI
+  trigger label/comment, enqueue CI, or otherwise start gated CI until the
+  parent marks `ready-for-ci`. Never invent an undocumented skip mechanism.
 
 Authority: Inspect, edit, test, commit, push, and maintain this PR without asking
 again. Stop for unrelated external writes, destructive action beyond requested
@@ -127,18 +142,19 @@ heartbeat unless the user declines: use `automation_update` with
 its prompt self-contained with the repository, lane table, criteria, live
 PR/CI/review checks, and authority to send corrective prompts. Use Luna low when
 available. Report only material changes; delete the heartbeat when every lane
-is ready, deferred, merged by a later workflow, or blocked on user input.
+is ready, deferred, or blocked on user input.
 
 Use this state flow:
 
 ```text
-assigned -> implementing -> local-verified -> ready-pr-open -> parent-reviewed -> ready-for-ci -> merge-candidate
+assigned -> implementing -> local-verified -> ready-pr-open -> parent-reviewed -> ready-for-ci -> ci-verified
 exceptions: ci-red-owned | base-refresh-needed | blocked
 ```
 
-- A ready PR is not automatically CI-ready or merge-ready.
+- A ready PR is not automatically CI-ready. Missing gated checks are not a
+  blocker before `ready-for-ci`; triggering them early is scope drift.
 - Mark `base-refresh-needed` only for a ruleset blocker, proven stale-base
-  failure, merged dependency, or imminent merge-order need.
+  failure, or changed dependency.
 - Correct children with: observed gap and evidence, required outcome, fix
   boundary, validation, and stop condition. Do not resend the original prompt.
 
@@ -150,7 +166,7 @@ is unavailable or the user asks the parent to finish.
 
 ## Finish
 
-This skill ends at verified PR readiness and maintenance; it does not merge.
-Lead with the batch outcome, then give the lane table, PR links, verification,
+This skill ends at verified PR readiness and maintenance. Lead with the batch
+outcome, then give the lane table, PR links, verification,
 material blockers or caveats, and next action. Mark an explicit goal complete
 only when those facts are true.
